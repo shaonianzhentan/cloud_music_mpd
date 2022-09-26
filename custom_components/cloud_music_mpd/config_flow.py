@@ -42,7 +42,7 @@ class SimpleConfigFlow(ConfigFlow, domain=DOMAIN):
         DATA_SCHEMA = vol.Schema({
             vol.Required(CONF_NAME, default=user_input.get(CONF_NAME, DEFAULT_NAME)): str,
             vol.Required(CONF_HOST, default=user_input.get(CONF_HOST)): str,
-            vol.Required(CONF_PORT, default=user_input.get(CONF_PORT)): str,
-            vol.Optional(CONF_PASSWORD, default=user_input.get(CONF_PASSWORD)): str
+            vol.Required(CONF_PORT, default=user_input.get(CONF_PORT, DEFAULT_PORT)): int,
+            vol.Optional(CONF_PASSWORD, default=user_input.get(CONF_PASSWORD, '')): str
         })
         return self.async_show_form(step_id="user", data_schema=DATA_SCHEMA, errors=errors)

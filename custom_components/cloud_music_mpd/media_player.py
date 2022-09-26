@@ -17,18 +17,51 @@ from homeassistant.components.media_player import (
     BrowseMedia,
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
-    MediaPlayerState,
-    MediaType,
-    RepeatMode,
     async_process_play_media_url,
 )
-from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PASSWORD, CONF_PORT
+from homeassistant.const import (
+    CONF_HOST, CONF_NAME, CONF_PASSWORD, CONF_PORT,    
+    STATE_OFF, 
+    STATE_ON, 
+    STATE_PLAYING, 
+    STATE_PAUSED,
+    STATE_UNAVAILABLE
+)
+from homeassistant.components.media_player.const import (
+    MEDIA_CLASS_ALBUM,
+    MEDIA_CLASS_ARTIST,
+    MEDIA_CLASS_CHANNEL,
+    MEDIA_CLASS_DIRECTORY,
+    MEDIA_CLASS_EPISODE,
+    MEDIA_CLASS_MOVIE,
+    MEDIA_CLASS_MUSIC,
+    MEDIA_CLASS_PLAYLIST,
+    MEDIA_CLASS_SEASON,
+    MEDIA_CLASS_TRACK,
+    MEDIA_CLASS_TV_SHOW,
+    MEDIA_TYPE_ALBUM,
+    MEDIA_TYPE_ARTIST,
+    MEDIA_TYPE_CHANNEL,
+    MEDIA_TYPE_EPISODE,
+    MEDIA_TYPE_MUSIC,
+    MEDIA_TYPE_MOVIE,
+    MEDIA_TYPE_PLAYLIST,
+    MEDIA_TYPE_SEASON,
+    MEDIA_TYPE_TRACK,
+    MEDIA_TYPE_TVSHOW,
+    REPEAT_MODE_ALL,
+    REPEAT_MODE_OFF,
+    REPEAT_MODE_ONE,
+    REPEAT_MODES
+)
 from homeassistant.core import HomeAssistant
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.util import Throttle
 import homeassistant.util.dt as dt_util
+
+from custom_components.ha_cloud_music.browse_media import async_browse_media, async_play_media
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -69,7 +102,7 @@ async def async_setup_entry(
 class MpdDevice(MediaPlayerEntity):
     """Representation of a MPD server."""
 
-    _attr_media_content_type = MediaType.MUSIC
+    _attr_media_content_type = MEDIA_TYPE_MUSIC
 
     # pylint: disable=no-member
     def __init__(self, server, port, password, name):
@@ -98,12 +131,15 @@ class MpdDevice(MediaPlayerEntity):
         self._client.timeout = 30
         self._client.idletimeout = None
 
+        self.playlist = []
+        self.playindex = 0
+
     async def _connect(self):
         """Connect to MPD."""
         try:
             await self._client.connect(self.server, self.port)
 
-            if self.password is not None:
+            if self.password != '':
                 await self._client.password(self.password)
         except mpd.ConnectionError:
             return
@@ -159,18 +195,18 @@ class MpdDevice(MediaPlayerEntity):
         return self._name
 
     @property
-    def state(self) -> MediaPlayerState:
+    def state(self):
         """Return the media state."""
         if self._status is None:
-            return MediaPlayerState.OFF
+            return STATE_OFF
         if self._status["state"] == "play":
-            return MediaPlayerState.PLAYING
+            return STATE_PLAYING
         if self._status["state"] == "pause":
-            return MediaPlayerState.PAUSED
+            return STATE_PAUSED
         if self._status["state"] == "stop":
-            return MediaPlayerState.OFF
+            return STATE_OFF
 
-        return MediaPlayerState.OFF
+        return STATE_OFF
 
     @property
     def is_volume_muted(self):
@@ -352,7 +388,7 @@ class MpdDevice(MediaPlayerEntity):
 
     async def async_select_source(self, source: str) -> None:
         """Choose a different available playlist and play it."""
-        await self.async_play_media(MediaType.PLAYLIST, source)
+        await self.async_play_media(MEDIA_TYPE_PLAYLIST, source)
 
     @Throttle(PLAYLIST_UPDATE_INTERVAL)
     async def _update_playlists(self, **kwargs: Any) -> None:
@@ -422,47 +458,39 @@ class MpdDevice(MediaPlayerEntity):
     async def async_play_media(
         self, media_type: str, media_id: str, **kwargs: Any
     ) -> None:
-        """Send the media player the command for playing a playlist."""
-        if media_source.is_media_source_id(media_id):
-            media_type = MediaType.MUSIC
-            play_item = await media_source.async_resolve_media(
-                self.hass, media_id, self.entity_id
-            )
-            media_id = async_process_play_media_url(self.hass, play_item.url)
+        url = await async_play_media(self, media_type, media_id)
+        if url is None:
+            if media_source.is_media_source_id(media_id):
+                media_type = MEDIA_TYPE_MUSIC
+                play_item = await media_source.async_resolve_media(
+                    self.hass, media_id, self.entity_id
+                )
+                media_id = async_process_play_media_url(self.hass, play_item.url)
 
-        if media_type == MediaType.PLAYLIST:
-            _LOGGER.debug("Playing playlist: %s", media_id)
-            if media_id in self._playlists:
-                self._currentplaylist = media_id
-            else:
-                self._currentplaylist = None
-                _LOGGER.warning("Unknown playlist name %s", media_id)
-            await self._client.clear()
-            await self._client.load(media_id)
-            await self._client.play()
-        else:
-            await self._client.clear()
-            self._currentplaylist = None
-            await self._client.add(media_id)
-            await self._client.play()
+        self._currentplaylist = None
+        await self._client.clear()
+        for music_info in self.playlist:
+            print(music_info.url)
+            self._client.add(music_info.url)
+        await self._client.play(self.playindex)
 
     @property
-    def repeat(self) -> RepeatMode:
+    def repeat(self):
         """Return current repeat mode."""
         if self._status["repeat"] == "1":
             if self._status["single"] == "1":
-                return RepeatMode.ONE
-            return RepeatMode.ALL
-        return RepeatMode.OFF
+                return REPEAT_MODE_ONE
+            return REPEAT_MODE_ALL
+        return REPEAT_MODE_OFF
 
-    async def async_set_repeat(self, repeat: RepeatMode) -> None:
+    async def async_set_repeat(self, repeat) -> None:
         """Set repeat mode."""
-        if repeat == RepeatMode.OFF:
+        if repeat == REPEAT_MODE_OFF:
             await self._client.repeat(0)
             await self._client.single(0)
         else:
             await self._client.repeat(1)
-            if repeat == RepeatMode.ONE:
+            if repeat == REPEAT_MODE_ONE:
                 await self._client.single(1)
             else:
                 await self._client.single(0)
@@ -496,9 +524,14 @@ class MpdDevice(MediaPlayerEntity):
     async def async_browse_media(
         self, media_content_type: str | None = None, media_content_id: str | None = None
     ) -> BrowseMedia:
-        """Implement the websocket media browsing helper."""
+        """Implement the websocket media browsing helper."""        
+        if media_content_type is None:
+            media_content_type = 'cloud_music'
+        return await async_browse_media(self, media_content_type, media_content_id)
+        '''
         return await media_source.async_browse_media(
             self.hass,
             media_content_id,
             content_filter=lambda item: item.media_content_type.startswith("audio/"),
         )
+        '''
