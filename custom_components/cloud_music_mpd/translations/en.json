@@ -1,0 +1,22 @@
+{
+    "title": "云音乐MPD播放器",
+    "config": {
+        "abort": {
+            "single_instance_allowed": "仅允许单个配置"
+        },
+        "step": {
+            "user": {
+                "description": "必须先安装云音乐插件：https://github.com/shaonianzhentan/ha_cloud_music",
+                "data": {
+                    "name": "名称",
+                    "host": "IP地址",
+                    "port": "端口",
+                    "password": "密码"
+                }
+            }
+        },
+        "error": {
+            "login_failed": "连接失败"
+        }
+    }
+}
