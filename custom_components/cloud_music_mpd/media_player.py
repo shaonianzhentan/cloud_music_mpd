@@ -61,8 +61,6 @@ from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.util import Throttle
 import homeassistant.util.dt as dt_util
 
-from custom_components.ha_cloud_music.browse_media import async_browse_media, async_play_media
-
 _LOGGER = logging.getLogger(__name__)
 
 PLAYLIST_UPDATE_INTERVAL = timedelta(seconds=120)
@@ -458,14 +456,16 @@ class MpdDevice(MediaPlayerEntity):
     async def async_play_media(
         self, media_type: str, media_id: str, **kwargs: Any
     ) -> None:
-        url = await async_play_media(self, media_type, media_id)
-        if url is None:
-            if media_source.is_media_source_id(media_id):
-                media_type = MEDIA_TYPE_MUSIC
-                play_item = await media_source.async_resolve_media(
-                    self.hass, media_id, self.entity_id
-                )
-                media_id = async_process_play_media_url(self.hass, play_item.url)
+        cloud_music = self.hass.data.get('cloud_music')
+        if cloud_music is not None:
+            url = await cloud_music.async_play_media(self, media_type, media_id)
+            if url is None:
+                if media_source.is_media_source_id(media_id):
+                    media_type = MEDIA_TYPE_MUSIC
+                    play_item = await media_source.async_resolve_media(
+                        self.hass, media_id, self.entity_id
+                    )
+                    media_id = async_process_play_media_url(self.hass, play_item.url)
 
         self._currentplaylist = None
         await self._client.clear()
@@ -524,10 +524,12 @@ class MpdDevice(MediaPlayerEntity):
     async def async_browse_media(
         self, media_content_type: str | None = None, media_content_id: str | None = None
     ) -> BrowseMedia:
-        """Implement the websocket media browsing helper."""        
-        if media_content_type is None:
-            media_content_type = 'cloud_music'
-        return await async_browse_media(self, media_content_type, media_content_id)
+        """Implement the websocket media browsing helper."""
+        
+        cloud_music = self.hass.data.get('cloud_music')
+        if cloud_music is not None:
+            return await cloud_music.async_browse_media(self, media_content_type, media_content_id)
+
         '''
         return await media_source.async_browse_media(
             self.hass,
