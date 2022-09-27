@@ -458,24 +458,21 @@ class MpdDevice(MediaPlayerEntity):
     ) -> None:
         cloud_music = self.hass.data.get('cloud_music')
         if cloud_music is not None:
-            url = await cloud_music.async_play_media(self, media_type, media_id)
-            if url is None:
-                if media_source.is_media_source_id(media_id):
-                    media_type = MEDIA_TYPE_MUSIC
-                    play_item = await media_source.async_resolve_media(
-                        self.hass, media_id, self.entity_id
-                    )
-                    media_id = async_process_play_media_url(self.hass, play_item.url)
+            result = await cloud_music.async_play_media(self, media_type, media_id)
+            if result is not None:
+                if result != 'index':
+                    await self._client.clear()
+                    await self.playlist_add(0)
+                await self._client.play(self.playindex)
 
         self._currentplaylist = None
-
-        urls = []
-        for music_info in self.playlist:
-            urls.append(music_info.url)
-
-        await self._client.clear()
-        await self._client.load(music_info.url, urls)
-        await self._client.play(self.playindex)
+    
+    async def playlist_add(self, index):
+        if index < len(self.playlist):
+            music_info = self.playlist[index]
+            # print(music_info.url)
+            await self._client.add(music_info.url)
+            await self.playlist_add(index + 1)
 
     @property
     def repeat(self):
@@ -532,11 +529,3 @@ class MpdDevice(MediaPlayerEntity):
         cloud_music = self.hass.data.get('cloud_music')
         if cloud_music is not None:
             return await cloud_music.async_browse_media(self, media_content_type, media_content_id)
-
-        '''
-        return await media_source.async_browse_media(
-            self.hass,
-            media_content_id,
-            content_filter=lambda item: item.media_content_type.startswith("audio/"),
-        )
-        '''
