@@ -468,10 +468,13 @@ class MpdDevice(MediaPlayerEntity):
                     media_id = async_process_play_media_url(self.hass, play_item.url)
 
         self._currentplaylist = None
-        await self._client.clear()
+
+        urls = []
         for music_info in self.playlist:
-            print(music_info.url)
-            self._client.add(music_info.url)
+            urls.append(music_info.url)
+
+        await self._client.clear()
+        await self._client.load(music_info.url, urls)
         await self._client.play(self.playindex)
 
     @property
