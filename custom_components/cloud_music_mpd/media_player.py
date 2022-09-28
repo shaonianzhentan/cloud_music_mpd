@@ -17,7 +17,7 @@ from homeassistant.components.media_player import (
     BrowseMedia,
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
-    async_process_play_media_url,
+    MediaPlayerDeviceClass,
 )
 from homeassistant.const import (
     CONF_HOST, CONF_NAME, CONF_PASSWORD, CONF_PORT,    
@@ -62,6 +62,8 @@ from homeassistant.util import Throttle
 import homeassistant.util.dt as dt_util
 
 _LOGGER = logging.getLogger(__name__)
+
+from .manifest import manifest
 
 PLAYLIST_UPDATE_INTERVAL = timedelta(seconds=120)
 
@@ -119,10 +121,13 @@ class MpdDevice(MediaPlayerEntity):
         self._muted_volume = None
         self._media_position_updated_at = None
         self._media_position = None
-        self._media_image_hash = None
+        
         # Track if the song changed so image doesn't have to be loaded every update.
         self._media_image_file = None
         self._commands = None
+
+        self._attr_media_image_remotely_accessible = True
+        self._attr_device_class = MediaPlayerDeviceClass.TV.value
 
         # set up MPD client
         self._client = MPDClient()
@@ -131,6 +136,19 @@ class MpdDevice(MediaPlayerEntity):
 
         self.playlist = []
         self.playindex = 0
+        self._attr_unique_id = server
+
+    @property
+    def device_info(self):
+        return {
+            'identifiers': {
+                (manifest.domain, manifest.documentation)
+            },
+            'name': self.name,
+            'manufacturer': 'shaonianzhentan',
+            'model': 'CloudMusic',
+            'sw_version': manifest.version
+        }
 
     async def _connect(self):
         """Connect to MPD."""
@@ -155,7 +173,6 @@ class MpdDevice(MediaPlayerEntity):
         """Fetch status from MPD."""
         self._status = await self._client.status()
         self._currentsong = await self._client.currentsong()
-        await self._async_update_media_image_hash()
 
         if (position := self._status.get("elapsed")) is None:
             position = self._status.get("time")
@@ -167,7 +184,16 @@ class MpdDevice(MediaPlayerEntity):
             self._media_position_updated_at = dt_util.utcnow()
             self._media_position = int(float(position))
 
-        await self._update_playlists()
+        # 更新信息
+        file = self._currentsong.get('file')
+        if file is not None:
+            arr = list(filter(lambda x:x.url == file, self.playlist))
+            if len(arr) > 0:
+                music_info = arr[0]
+                self._attr_media_image_url = music_info.thumbnail
+                self._attr_media_title = music_info.song
+                self._attr_app_name = music_info.singer
+                self._attr_media_artist = music_info.singer
 
     @property
     def available(self):
@@ -242,112 +268,9 @@ class MpdDevice(MediaPlayerEntity):
         return self._media_position_updated_at
 
     @property
-    def media_title(self):
-        """Return the title of current playing media."""
-        name = self._currentsong.get("name", None)
-        title = self._currentsong.get("title", None)
-        file_name = self._currentsong.get("file", None)
-
-        if name is None and title is None:
-            if file_name is None:
-                return "None"
-            return os.path.basename(file_name)
-        if name is None:
-            return title
-        if title is None:
-            return name
-
-        return f"{name}: {title}"
-
-    @property
-    def media_artist(self):
-        """Return the artist of current playing media (Music track only)."""
-        artists = self._currentsong.get("artist")
-        if isinstance(artists, list):
-            return ", ".join(artists)
-        return artists
-
-    @property
     def media_album_name(self):
         """Return the album of current playing media (Music track only)."""
         return self._currentsong.get("album")
-
-    @property
-    def media_image_hash(self):
-        """Hash value for media image."""
-        return self._media_image_hash
-
-    async def async_get_media_image(self) -> tuple[bytes | None, str | None]:
-        """Fetch media image of current playing track."""
-        if not (file := self._currentsong.get("file")):
-            return None, None
-        response = await self._async_get_file_image_response(file)
-        if response is None:
-            return None, None
-
-        image = bytes(response["binary"])
-        mime = response.get(
-            "type", "image/png"
-        )  # readpicture has type, albumart does not
-        return (image, mime)
-
-    async def _async_update_media_image_hash(self):
-        """Update the hash value for the media image."""
-        file = self._currentsong.get("file")
-
-        if file == self._media_image_file:
-            return
-
-        if (
-            file is not None
-            and (response := await self._async_get_file_image_response(file))
-            is not None
-        ):
-            self._media_image_hash = hashlib.sha256(
-                bytes(response["binary"])
-            ).hexdigest()[:16]
-        else:
-            # If there is no image, this hash has to be None, else the media player component
-            # assumes there is an image and returns an error trying to load it and the
-            # frontend media control card breaks.
-            self._media_image_hash = None
-
-        self._media_image_file = file
-
-    async def _async_get_file_image_response(self, file):
-        # not all MPD implementations and versions support the `albumart` and `fetchpicture` commands
-        can_albumart = "albumart" in self._commands
-        can_readpicture = "readpicture" in self._commands
-
-        response = None
-
-        # read artwork embedded into the media file
-        if can_readpicture:
-            try:
-                response = await self._client.readpicture(file)
-            except mpd.CommandError as error:
-                if error.errno is not mpd.FailureResponseCode.NO_EXIST:
-                    _LOGGER.warning(
-                        "Retrieving artwork through `readpicture` command failed: %s",
-                        error,
-                    )
-
-        # read artwork contained in the media directory (cover.{jpg,png,tiff,bmp}) if none is embedded
-        if can_albumart and not response:
-            try:
-                response = await self._client.albumart(file)
-            except mpd.CommandError as error:
-                if error.errno is not mpd.FailureResponseCode.NO_EXIST:
-                    _LOGGER.warning(
-                        "Retrieving artwork through `albumart` command failed: %s",
-                        error,
-                    )
-
-        # response can be an empty object if there is no image
-        if not response:
-            return None
-
-        return response
 
     @property
     def volume_level(self):
@@ -387,17 +310,6 @@ class MpdDevice(MediaPlayerEntity):
     async def async_select_source(self, source: str) -> None:
         """Choose a different available playlist and play it."""
         await self.async_play_media(MEDIA_TYPE_PLAYLIST, source)
-
-    @Throttle(PLAYLIST_UPDATE_INTERVAL)
-    async def _update_playlists(self, **kwargs: Any) -> None:
-        """Update available MPD playlists."""
-        try:
-            self._playlists = []
-            for playlist_data in await self._client.listplaylists():
-                self._playlists.append(playlist_data["playlist"])
-        except mpd.CommandError as error:
-            self._playlists = None
-            _LOGGER.warning("Playlists could not be updated: %s:", error)
 
     async def async_set_volume_level(self, volume: float) -> None:
         """Set volume of media player."""
@@ -458,12 +370,19 @@ class MpdDevice(MediaPlayerEntity):
     ) -> None:
         cloud_music = self.hass.data.get('cloud_music')
         if cloud_music is not None:
-            result = await cloud_music.async_play_media(self, media_type, media_id)
+            result = await cloud_music.async_play_media(self, cloud_music, media_id)
             if result is not None:
-                if result != 'index':
+                if result == 'local/playlist':
+                    # 播放当前列表指定项
+                    await self._client.play(self.playindex)
+                elif result[:4] == 'http':
+                    # HTTP播放链接
+                    pass
+                else:
+                    # 添加播放列表到播放器
                     await self._client.clear()
                     await self.playlist_add(0)
-                await self._client.play(self.playindex)
+                    await self._client.play(self.playindex)
 
         self._currentplaylist = None
     
@@ -511,7 +430,6 @@ class MpdDevice(MediaPlayerEntity):
     async def async_turn_on(self) -> None:
         """Service to send the MPD the command to start playing."""
         await self._client.play()
-        await self._update_playlists(no_throttle=True)
 
     async def async_clear_playlist(self) -> None:
         """Clear players playlist."""
