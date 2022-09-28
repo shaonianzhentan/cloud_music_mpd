@@ -372,10 +372,10 @@ class MpdDevice(MediaPlayerEntity):
         if cloud_music is not None:
             result = await cloud_music.async_play_media(self, cloud_music, media_id)
             if result is not None:
-                if result == 'local/playlist':
+                if result == 'index':
                     # 播放当前列表指定项
                     await self._client.play(self.playindex)
-                elif result[:4] == 'http':
+                elif result.startswith('http'):
                     # HTTP播放链接
                     pass
                 else:
@@ -383,8 +383,6 @@ class MpdDevice(MediaPlayerEntity):
                     await self._client.clear()
                     await self.playlist_add(0)
                     await self._client.play(self.playindex)
-
-        self._currentplaylist = None
     
     async def playlist_add(self, index):
         if index < len(self.playlist):
