@@ -3,9 +3,7 @@ from __future__ import annotations
 
 from contextlib import suppress
 from datetime import timedelta
-import hashlib
 import logging
-import os
 from typing import Any
 
 import mpd
@@ -137,6 +135,9 @@ class MpdDevice(MediaPlayerEntity):
         self.playlist = []
         self.playindex = 0
         self._attr_unique_id = server
+        self._attributes = {
+            'platform': 'cloud_music'
+        }
 
     @property
     def device_info(self):
@@ -149,6 +150,10 @@ class MpdDevice(MediaPlayerEntity):
             'model': 'CloudMusic',
             'sw_version': manifest.version
         }
+
+    @property
+    def extra_state_attributes(self):
+        return self._attributes
 
     async def _connect(self):
         """Connect to MPD."""

@@ -1,7 +1,7 @@
 {
     "domain": "cloud_music_mpd",
     "name": "\u4E91\u97F3\u4E50MPD\u64AD\u653E\u5668",
-    "version": "2023.2.5",
+    "version": "2023.5.11",
     "config_flow": true,
     "documentation": "https://github.com/shaonianzhentan/cloud_music_mpd",
     "requirements": [
