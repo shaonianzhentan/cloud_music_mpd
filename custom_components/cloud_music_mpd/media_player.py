@@ -390,14 +390,10 @@ class MpdDevice(MediaPlayerEntity):
                     await self._client.play(self.playindex)
     
     async def playlist_add(self, index):
-        if index < len(self.playlist):
+        while index < len(self.playlist):
             music_info = self.playlist[index]
-            # print(music_info.url)
             await self._client.add(music_info.url)
-            await self.playlist_add(index + 1)
-        else:
-            # 索引超出了播放列表的长度，停止递归
-            return
+            index += 1
 
     @property
     def repeat(self):
