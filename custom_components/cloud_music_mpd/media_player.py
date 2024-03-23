@@ -18,10 +18,10 @@ from homeassistant.components.media_player import (
     MediaPlayerDeviceClass,
 )
 from homeassistant.const import (
-    CONF_HOST, CONF_NAME, CONF_PASSWORD, CONF_PORT,    
-    STATE_OFF, 
-    STATE_ON, 
-    STATE_PLAYING, 
+    CONF_HOST, CONF_NAME, CONF_PASSWORD, CONF_PORT,
+    STATE_OFF,
+    STATE_ON,
+    STATE_PLAYING,
     STATE_PAUSED,
     STATE_UNAVAILABLE
 )
@@ -119,7 +119,7 @@ class MpdDevice(MediaPlayerEntity):
         self._muted_volume = None
         self._media_position_updated_at = None
         self._media_position = None
-        
+
         # Track if the song changed so image doesn't have to be loaded every update.
         self._media_image_file = None
         self._commands = None
@@ -327,7 +327,7 @@ class MpdDevice(MediaPlayerEntity):
             current_volume = int(self._status["volume"])
 
             if current_volume <= 100:
-                self._client.setvol(current_volume + 5)
+                self._client.setvol(current_volume + 1)
 
     async def async_volume_down(self) -> None:
         """Service to send the MPD the command for volume down."""
@@ -335,7 +335,7 @@ class MpdDevice(MediaPlayerEntity):
             current_volume = int(self._status["volume"])
 
             if current_volume >= 0:
-                await self._client.setvol(current_volume - 5)
+                await self._client.setvol(current_volume - 1)
 
     async def async_media_play(self) -> None:
         """Service to send the MPD the command for play/pause."""
@@ -376,6 +376,7 @@ class MpdDevice(MediaPlayerEntity):
         cloud_music = self.hass.data.get('cloud_music')
         if cloud_music is not None:
             result = await cloud_music.async_play_media(self, cloud_music, media_id)
+            cloud_music.nowplaying_id = self.playlist[self.playindex].id
             if result is not None:
                 if result == 'index':
                     # 播放当前列表指定项
@@ -388,7 +389,7 @@ class MpdDevice(MediaPlayerEntity):
                     await self._client.clear()
                     await self.playlist_add(0)
                     await self._client.play(self.playindex)
-    
+
     async def playlist_add(self, index):
         while index < len(self.playlist):
             music_info = self.playlist[index]
@@ -445,7 +446,7 @@ class MpdDevice(MediaPlayerEntity):
         self, media_content_type: str | None = None, media_content_id: str | None = None
     ) -> BrowseMedia:
         """Implement the websocket media browsing helper."""
-        
+
         cloud_music = self.hass.data.get('cloud_music')
         if cloud_music is not None:
             return await cloud_music.async_browse_media(self, media_content_type, media_content_id)
