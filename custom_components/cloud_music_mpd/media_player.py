@@ -16,42 +16,50 @@ from homeassistant.components.media_player import (
     MediaPlayerEntity,
     MediaPlayerEntityFeature,
     MediaPlayerDeviceClass,
+    MediaClass,
+    MediaType,
+    RepeatMode,
 )
 from homeassistant.const import (
-    CONF_HOST, CONF_NAME, CONF_PASSWORD, CONF_PORT,    
-    STATE_OFF, 
-    STATE_ON, 
-    STATE_PLAYING, 
+    CONF_HOST, CONF_NAME, CONF_PASSWORD, CONF_PORT,
+    STATE_OFF,
+    STATE_ON,
+    STATE_PLAYING,
     STATE_PAUSED,
     STATE_UNAVAILABLE
 )
-from homeassistant.components.media_player.const import (
-    MEDIA_CLASS_ALBUM,
-    MEDIA_CLASS_ARTIST,
-    MEDIA_CLASS_CHANNEL,
-    MEDIA_CLASS_DIRECTORY,
-    MEDIA_CLASS_EPISODE,
-    MEDIA_CLASS_MOVIE,
-    MEDIA_CLASS_MUSIC,
-    MEDIA_CLASS_PLAYLIST,
-    MEDIA_CLASS_SEASON,
-    MEDIA_CLASS_TRACK,
-    MEDIA_CLASS_TV_SHOW,
-    MEDIA_TYPE_ALBUM,
-    MEDIA_TYPE_ARTIST,
-    MEDIA_TYPE_CHANNEL,
-    MEDIA_TYPE_EPISODE,
-    MEDIA_TYPE_MUSIC,
-    MEDIA_TYPE_MOVIE,
-    MEDIA_TYPE_PLAYLIST,
-    MEDIA_TYPE_SEASON,
-    MEDIA_TYPE_TRACK,
-    MEDIA_TYPE_TVSHOW,
-    REPEAT_MODE_ALL,
-    REPEAT_MODE_OFF,
-    REPEAT_MODE_ONE,
-    REPEAT_MODES
-)
+
+# 适配 2025.12 版本的媒体类定义
+MEDIA_CLASS_ALBUM = MediaClass.ALBUM
+MEDIA_CLASS_ARTIST = MediaClass.ARTIST
+MEDIA_CLASS_CHANNEL = MediaClass.CHANNEL
+MEDIA_CLASS_DIRECTORY = MediaClass.DIRECTORY
+MEDIA_CLASS_EPISODE = MediaClass.EPISODE
+MEDIA_CLASS_MOVIE = MediaClass.MOVIE
+MEDIA_CLASS_MUSIC = MediaClass.MUSIC
+MEDIA_CLASS_PLAYLIST = MediaClass.PLAYLIST
+MEDIA_CLASS_SEASON = MediaClass.SEASON
+MEDIA_CLASS_TRACK = MediaClass.TRACK
+MEDIA_CLASS_TV_SHOW = MediaClass.TV_SHOW
+
+# 修复 ImportError: 从 MediaType 枚举获取常量
+MEDIA_TYPE_ALBUM = MediaType.ALBUM
+MEDIA_TYPE_ARTIST = MediaType.ARTIST
+MEDIA_TYPE_CHANNEL = MediaType.CHANNEL
+MEDIA_TYPE_EPISODE = MediaType.EPISODE
+MEDIA_TYPE_MUSIC = MediaType.MUSIC
+MEDIA_TYPE_MOVIE = MediaType.MOVIE
+MEDIA_TYPE_PLAYLIST = MediaType.PLAYLIST
+MEDIA_TYPE_SEASON = MediaType.SEASON
+MEDIA_TYPE_TRACK = MediaType.TRACK
+MEDIA_TYPE_TVSHOW = MediaType.TVSHOW
+
+# 修复重复模式常量
+REPEAT_MODE_ALL = RepeatMode.ALL
+REPEAT_MODE_OFF = RepeatMode.OFF
+REPEAT_MODE_ONE = RepeatMode.ONE
+REPEAT_MODES = [RepeatMode.OFF, RepeatMode.ALL, RepeatMode.ONE]
+
 from homeassistant.core import HomeAssistant
 import homeassistant.helpers.config_validation as cv
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -102,7 +110,6 @@ class MpdDevice(MediaPlayerEntity):
 
     _attr_media_content_type = MEDIA_TYPE_MUSIC
 
-    # pylint: disable=no-member
     def __init__(self, server, port, password, name):
         """Initialize the MPD device."""
         self.server = server
@@ -119,22 +126,24 @@ class MpdDevice(MediaPlayerEntity):
         self._muted_volume = None
         self._media_position_updated_at = None
         self._media_position = None
-        
+
         # Track if the song changed so image doesn't have to be loaded every update.
         self._media_image_file = None
         self._commands = None
 
         self._attr_media_image_remotely_accessible = True
-        self._attr_device_class = MediaPlayerDeviceClass.TV.value
+        # 2025.12 推荐直接使用枚举对象
+        self._attr_device_class = MediaPlayerDeviceClass.TV
 
-        # set up MPD client
+        # MPD client
         self._client = MPDClient()
         self._client.timeout = 30
         self._client.idletimeout = None
 
         self.playlist = []
         self.playindex = 0
-        self._attr_unique_id = server
+        self.is_tts = False
+        self._attr_unique_id = f"mpd_{server}_{port}"
         self._attributes = {
             'platform': 'cloud_music'
         }
@@ -143,7 +152,7 @@ class MpdDevice(MediaPlayerEntity):
     def device_info(self):
         return {
             'identifiers': {
-                (manifest.domain, manifest.documentation)
+                (manifest.domain, self._attr_unique_id)
             },
             'name': self.name,
             'manufacturer': 'shaonianzhentan',
@@ -159,17 +168,16 @@ class MpdDevice(MediaPlayerEntity):
         """Connect to MPD."""
         try:
             await self._client.connect(self.server, self.port)
-
             if self.password != '':
                 await self._client.password(self.password)
-        except mpd.ConnectionError:
+        except (mpd.ConnectionError, OSError):
             return
 
         self._is_connected = True
 
     def _disconnect(self):
         """Disconnect from MPD."""
-        with suppress(mpd.ConnectionError):
+        with suppress(mpd.ConnectionError, OSError):
             self._client.disconnect()
         self._is_connected = False
         self._status = None
@@ -181,75 +189,76 @@ class MpdDevice(MediaPlayerEntity):
 
         if (position := self._status.get("elapsed")) is None:
             position = self._status.get("time")
-
             if isinstance(position, str) and ":" in position:
                 position = position.split(":")[0]
 
-        if position is not None and self._media_position != position:
-            self._media_position_updated_at = dt_util.utcnow()
-            self._media_position = int(float(position))
+        if position is not None:
+            try:
+                float_pos = int(float(position))
+                if self._media_position != float_pos:
+                    self._media_position_updated_at = dt_util.utcnow()
+                    self._media_position = float_pos
+            except ValueError:
+                pass
 
-        # 更新信息
+        # cloud_music metadata
         file = self._currentsong.get('file')
         if file is not None:
-            arr = list(filter(lambda x:x.url == file, self.playlist))
+            arr = list(filter(lambda x: x.url == file, self.playlist))
             if len(arr) > 0:
                 music_info = arr[0]
                 self._attr_media_image_url = music_info.thumbnail
                 self._attr_media_title = music_info.song
                 self._attr_app_name = music_info.singer
                 self._attr_media_artist = music_info.singer
+                if self.is_tts:
+                    await self._client.pause(0)
+                    with suppress(Exception):
+                        await self._client.delete(len(self.playlist))
+                    self.is_tts = False
 
     @property
     def available(self):
-        """Return true if MPD is available and connected."""
         return self._is_connected
 
     async def async_update(self) -> None:
-        """Get the latest data and update the state."""
         try:
             if not self._is_connected:
                 await self._connect()
-                self._commands = list(await self._client.commands())
-
-            await self._fetch_status()
+                if self._is_connected:
+                    self._commands = list(await self._client.commands())
+            
+            if self._is_connected:
+                await self._fetch_status()
         except (mpd.ConnectionError, OSError, ValueError) as error:
-            # Cleanly disconnect in case connection is not in valid state
             _LOGGER.debug("Error updating status: %s", error)
             self._disconnect()
 
     @property
     def name(self):
-        """Return the name of the device."""
         return self._name
 
     @property
     def state(self):
-        """Return the media state."""
         if self._status is None:
             return STATE_OFF
-        if self._status["state"] == "play":
+        state = self._status.get("state")
+        if state == "play":
             return STATE_PLAYING
-        if self._status["state"] == "pause":
+        if state == "pause":
             return STATE_PAUSED
-        if self._status["state"] == "stop":
-            return STATE_OFF
-
         return STATE_OFF
 
     @property
     def is_volume_muted(self):
-        """Boolean if volume is currently muted."""
         return self._muted
 
     @property
     def media_content_id(self):
-        """Return the content ID of current playing media."""
         return self._currentsong.get("file")
 
     @property
     def media_duration(self):
-        """Return the duration of current playing media in seconds."""
         if currentsong_time := self._currentsong.get("time"):
             return currentsong_time
 
@@ -261,32 +270,24 @@ class MpdDevice(MediaPlayerEntity):
 
     @property
     def media_position(self):
-        """Position of current playing media in seconds.
-        This is returned as part of the mpd status rather than in the details
-        of the current song.
-        """
         return self._media_position
 
     @property
     def media_position_updated_at(self):
-        """Last valid time of media position."""
         return self._media_position_updated_at
 
     @property
     def media_album_name(self):
-        """Return the album of current playing media (Music track only)."""
         return self._currentsong.get("album")
 
     @property
     def volume_level(self):
-        """Return the volume level."""
-        if "volume" in self._status:
+        if self._status and "volume" in self._status:
             return int(self._status["volume"]) / 100
         return None
 
     @property
     def supported_features(self):
-        """Flag media player features that are supported."""
         if self._status is None:
             return 0
 
@@ -304,65 +305,51 @@ class MpdDevice(MediaPlayerEntity):
 
     @property
     def source(self):
-        """Name of the current input source."""
         return self._currentplaylist
 
     @property
     def source_list(self):
-        """Return the list of available input sources."""
         return self._playlists
 
     async def async_select_source(self, source: str) -> None:
-        """Choose a different available playlist and play it."""
         await self.async_play_media(MEDIA_TYPE_PLAYLIST, source)
 
     async def async_set_volume_level(self, volume: float) -> None:
-        """Set volume of media player."""
-        if "volume" in self._status:
+        if self._status and "volume" in self._status:
             await self._client.setvol(int(volume * 100))
 
     async def async_volume_up(self) -> None:
-        """Service to send the MPD the command for volume up."""
-        if "volume" in self._status:
+        if self._status and "volume" in self._status:
             current_volume = int(self._status["volume"])
-
             if current_volume <= 100:
-                self._client.setvol(current_volume + 5)
+                await self._client.setvol(min(current_volume + 5, 100))
 
     async def async_volume_down(self) -> None:
-        """Service to send the MPD the command for volume down."""
-        if "volume" in self._status:
+        if self._status and "volume" in self._status:
             current_volume = int(self._status["volume"])
-
             if current_volume >= 0:
-                await self._client.setvol(current_volume - 5)
+                await self._client.setvol(max(current_volume - 5, 0))
 
     async def async_media_play(self) -> None:
-        """Service to send the MPD the command for play/pause."""
-        if self._status["state"] == "pause":
+        if self._status and self._status.get("state") == "pause":
             await self._client.pause(0)
         else:
             await self._client.play()
 
     async def async_media_pause(self) -> None:
-        """Service to send the MPD the command for play/pause."""
         await self._client.pause(1)
 
     async def async_media_stop(self) -> None:
-        """Service to send the MPD the command for stop."""
         await self._client.stop()
 
     async def async_media_next_track(self) -> None:
-        """Service to send the MPD the command for next track."""
         await self._client.next()
 
     async def async_media_previous_track(self) -> None:
-        """Service to send the MPD the command for previous track."""
         await self._client.previous()
 
     async def async_mute_volume(self, mute: bool) -> None:
-        """Mute. Emulated with set_volume_level."""
-        if "volume" in self._status:
+        if self._status and "volume" in self._status:
             if mute:
                 self._muted_volume = self.volume_level
                 await self.async_set_volume_level(0)
@@ -378,35 +365,34 @@ class MpdDevice(MediaPlayerEntity):
             result = await cloud_music.async_play_media(self, cloud_music, media_id)
             if result is not None:
                 if result == 'index':
-                    # 播放当前列表指定项
                     await self._client.play(self.playindex)
-                elif result.startswith('http'):
-                    # HTTP播放链接
-                    pass
+                elif isinstance(result, str) and result.startswith('http'):
+                    playindex = len(self.playlist)
+                    await self._client.add(result)
+                    await self._client.play(playindex)
+                    self.is_tts = True
                 else:
-                    # 添加播放列表到播放器
                     await self._client.clear()
                     await self.playlist_add(0)
                     await self._client.play(self.playindex)
-    
+
     async def playlist_add(self, index):
         if index < len(self.playlist):
             music_info = self.playlist[index]
-            # print(music_info.url)
             await self._client.add(music_info.url)
             await self.playlist_add(index + 1)
 
     @property
     def repeat(self):
-        """Return current repeat mode."""
-        if self._status["repeat"] == "1":
-            if self._status["single"] == "1":
+        if not self._status:
+            return REPEAT_MODE_OFF
+        if self._status.get("repeat") == "1":
+            if self._status.get("single") == "1":
                 return REPEAT_MODE_ONE
             return REPEAT_MODE_ALL
         return REPEAT_MODE_OFF
 
-    async def async_set_repeat(self, repeat) -> None:
-        """Set repeat mode."""
+    async def async_set_repeat(self, repeat: RepeatMode) -> None:
         if repeat == REPEAT_MODE_OFF:
             await self._client.repeat(0)
             await self._client.single(0)
@@ -419,34 +405,27 @@ class MpdDevice(MediaPlayerEntity):
 
     @property
     def shuffle(self):
-        """Boolean if shuffle is enabled."""
-        return bool(int(self._status["random"]))
+        return self._status.get("random") == "1" if self._status else False
 
     async def async_set_shuffle(self, shuffle: bool) -> None:
-        """Enable/disable shuffle mode."""
         await self._client.random(int(shuffle))
 
     async def async_turn_off(self) -> None:
-        """Service to send the MPD the command to stop playing."""
         await self._client.stop()
 
     async def async_turn_on(self) -> None:
-        """Service to send the MPD the command to start playing."""
         await self._client.play()
 
     async def async_clear_playlist(self) -> None:
-        """Clear players playlist."""
         await self._client.clear()
 
     async def async_media_seek(self, position: float) -> None:
-        """Send seek command."""
-        await self._client.seekcur(position)
+        await self._client.seekcur(int(position))
 
     async def async_browse_media(
         self, media_content_type: str | None = None, media_content_id: str | None = None
     ) -> BrowseMedia:
-        """Implement the websocket media browsing helper."""
-        
         cloud_music = self.hass.data.get('cloud_music')
         if cloud_music is not None:
             return await cloud_music.async_browse_media(self, media_content_type, media_content_id)
+        return await super().async_browse_media(media_content_type, media_content_id)
